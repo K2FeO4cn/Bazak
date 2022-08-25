@@ -1,15 +1,22 @@
 #TODO : USE C++ to rewrite this proxy!!!
 import requests
-from bottle import route, run, Bottle
+from bottle import route, run, Bottle,response
 import random
 import time
 import json
 import os
+import threading 
 
 def save():
     global appdata
     with open("bazorxy.json","w+",encoding="UTF-8") as fp:
+        d1 = appdata["strt"] 
+        d2 = appdata["strp"]
+        appdata["strt"] = "[placehoder]"
+        appdata["strp"] = "[placehoder]"
         json.dump(appdata,fp)
+        appdata["strt"] = d1
+        appdata["strp"] = d2
         fp.close()
 
 def gen(data,code):
@@ -19,26 +26,27 @@ def gen(data,code):
     }
     return json.dumps(ret)
 
-def refresh():
-    global appdata
+def trefresh():
     randf = random.random()
     url_final = "https://api.hypixel.net/skyblock/bazaar" + "?r=" + str(randf)
     req = requests.get(url_final)
-    if req.status_code == 304 :
-        # No changed
-        if 'proxy-json' not in appdata:
-            appdata['proxy-json'] = req.json()
-        now = time.time()
-        appdata['proxy-json']["lastUpdated"] = int(round(now * 1000))
-        del now
-    elif(req.status_code == 200):
-        #data changed
-        appdata['proxy-json'] = req.json()
-        return
+    if req.status_code == 200 or req.status_code == 304 :
+        ret = req.json()
     else:
         assert "Failed to get data from upstream server: " + str(url_final) +" ."
+        ret = {}
     req.close()
-    return
+    ret["proxy"] = "bazorxy"
+    return ret
+
+def thread_refresh():
+    global appdata
+    while True:
+        appdata["session-lock"] = True
+        appdata["strt"] = json.dumps(trefresh())
+        appdata["session-lock"] = False
+        appdata["strp"] = appdata["strt"]
+        time.sleep(appdata["refresh-time"] / 1000)
 
 if __name__ != "__main__":
     raise Exception("This program is only runs in console mode.")
@@ -50,24 +58,22 @@ appdata = {}
 @app.route("/")
 def readCache():
     global appdata
-    now = time.time()
-    if 'proxy-json' not in appdata:
-        refresh()
-        appdata["proxy-str"] = json.dumps(appdata["proxy-json"])
-    if int(round(now * 1000)) - int(appdata["proxy-json"]["lastUpdated"]) >= int(appdata["refresh-time"]):
-        refresh()
-        appdata["proxy-str"] = json.dumps(appdata["proxy-json"])
-    if "proxy-str" not in appdata:
-        refresh()
-        appdata["proxy-str"] = json.dumps(appdata["proxy-json"])
-    return appdata["proxy-str"]
+    response.content_type = "application/json; charset=UTF-8"
+    if appdata['session-lock']:
+        return appdata['strp']
+    return appdata['strt']
 
 @app.route("/admin/<password>/<action>/<argument>/")
 def admin(password,action,argument):
     global appdata
+    response.content_type = "application/json; charset=UTF-8"
+    action = action.lower()
     if password == appdata["pwd"]:
         if action == "refresh":
-            refresh()
+            appdata["session-lock"] = True
+            appdata["strt"] = json.dumps(trefresh())
+            appdata["session-lock"] = False
+            appdata["strp"] = appdata["strt"]
             ret = {
                 "msg":"Refreshed."
             }
@@ -86,6 +92,12 @@ def admin(password,action,argument):
                 "msg":"Done."
             }
             return gen(ret,0)
+        elif action == "save":
+            save()
+            ret = {
+                "msg":"Server Saved."
+            }
+            return gen(ret,0)
         else:
             ret = {
                 "msg":"Invaild Method."
@@ -100,6 +112,7 @@ def admin(password,action,argument):
 @app.route("/init/<password>")
 def init(password):
     global appdata
+    response.content_type = "application/json; charset=UTF-8"
     if appdata["pwd"] == "":
         appdata["pwd"] = password
         save()
@@ -118,14 +131,26 @@ def init(password):
 if not os.path.exists("bazorxy.json"):
     appdata = {
         "pwd":"",
-        "proxy-json":{},
-        "proxy-str":"",
-        "refresh-time":2000
+        # "proxy-json":{},
+        "strt":"",
+        "strp":"",
+        "refresh-time":2000,
+        "session-lock":False
     }
-    refresh()
+    # refresh()
+    appdata["session-lock"] = True
+    appdata["strt"] = json.dumps(trefresh())
+    appdata["session-lock"] = False
+    appdata["strp"] = appdata["strt"]
     save()
 else:
     with open("bazorxy.json","r",encoding="UTF-8") as fp:
         appdata = json.load(fp)
+        appdata['session-lock'] = False
+        appdata['strp'] = "{\"success\":false,\"bazorxy\":\"Requiring data.\",\"porxy\":\"Bazorxy\"}"
+        appdata['strt'] = "{\"success\":false,\"bazorxy\":\"Requiring data.\",\"porxy\":\"Bazorxy\"}"
         fp.close()
-run(app, host='localhost', port=8080)
+
+t = threading.Thread(target=thread_refresh)
+t.start()
+run(app, host='0.0.0.0', port=8080)
