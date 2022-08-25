@@ -1,6 +1,6 @@
 #TODO : USE C++ to rewrite this proxy!!!
 import requests
-from bottle import route, run, Bottle,response
+from bottle import route, run, Bottle,response,request
 import random
 import time
 import json
@@ -29,13 +29,19 @@ def gen(data,code):
 def trefresh():
     randf = random.random()
     url_final = "https://api.hypixel.net/skyblock/bazaar" + "?r=" + str(randf)
-    req = requests.get(url_final)
-    if req.status_code == 200 or req.status_code == 304 :
-        ret = req.json()
-    else:
-        assert "Failed to get data from upstream server: " + str(url_final) +" ."
-        ret = {}
-    req.close()
+    try:
+        req = requests.get(url_final)
+        if req.status_code == 200 or req.status_code == 304 :
+            ret = req.json()
+            print("Successfully Refresh Proxy Cache:",ret["lastUpdated"])
+        else:
+            print("Failed to get data from upstream server: " + str(url_final) +".")
+            ret = {}
+        req.close()
+    except:
+        print("Failed to get data from upstream server: " + str(url_final) +".")
+        ret = {"success":False,"bazorxy":"Upstream Server Lost Response."}
+    
     ret["proxy"] = "bazorxy"
     return ret
 
@@ -55,6 +61,7 @@ app = Bottle()
 
 appdata = {}
 
+@app.route("/skyblock/bazaar")#Suits Old API
 @app.route("/")
 def readCache():
     global appdata
@@ -127,6 +134,22 @@ def init(password):
             "msg":"You've Already Initialized Bazorxy.",
         }
         return gen(ret,-1)
+
+
+@app.hook('before_request')
+def validate():
+    REQUEST_METHOD = request.environ.get('REQUEST_METHOD')
+ 
+    HTTP_ACCESS_CONTROL_REQUEST_METHOD = request.environ.get('HTTP_ACCESS_CONTROL_REQUEST_METHOD')
+    if REQUEST_METHOD == 'OPTIONS' and HTTP_ACCESS_CONTROL_REQUEST_METHOD:
+        request.environ['REQUEST_METHOD'] = HTTP_ACCESS_CONTROL_REQUEST_METHOD
+ 
+ 
+@app.hook('after_request')
+def enable_cors():
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Headers'] = '*'
+    response.headers['Server'] = 'bazorxy'
 
 if not os.path.exists("bazorxy.json"):
     appdata = {
